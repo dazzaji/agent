@@ -6,7 +6,7 @@ LLM based agents can be powerful tools.  To put them to their highest and best u
 
 # Transactional Agents
 
-The summarized document, authored by Dazza Greenwood, provides a comprehensive analysis of legal considerations surrounding transactional AI agents. It defines these agents, outlines their key features, and explores various legal frameworks that apply to their use. The document then delves into specific scenarios across different domains, discussing potential legal issues, causes of action, and risk mitigation strategies.
+The document, authored by Dazza Greenwood, provides a comprehensive analysis of legal considerations surrounding transactional AI agents. It defines these agents, outlines their key features, and explores various legal frameworks that apply to their use. The document then delves into specific scenarios across different domains, discussing potential legal issues, causes of action, and risk mitigation strategies.
 
 # Section-by-section summary:
 
