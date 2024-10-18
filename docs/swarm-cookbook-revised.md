@@ -156,7 +156,19 @@ Swarm is built on the following principles:
 
 **6. Basic Usage:**
 
-**6.1 Creating a Simple Agent:**
+**6.1 Imports:**
+
+First, be sure to include these imports:
+
+```python
+from openai import OpenAI
+from swarm import Swarm, Agent
+
+client = OpenAI()
+swarm = Swarm(client=client)
+```
+
+**6.2 Creating a Simple Agent:**
 
 Here’s how to create a simple agent that responds to user input:
 
@@ -176,7 +188,7 @@ response = client.run(agent=agent, messages=messages)
 print(response.messages[-1]["content"])
 ```
 
-**6.2 Adding Functions to an Agent:**
+**6.3 Adding Functions to an Agent:**
 
 Agents can call Python functions to interact with external systems:
 
