@@ -915,6 +915,8 @@ class Response(BaseModel):
 -   **Context Variables:** Functions can accept a `context_variables` argument to access and use the shared context.
 -   **Tool Selection Control:** For finer control over which function the model should call, you can use the `tool_choice` parameter in the `Agent` constructor (refer to OpenAI API documentation on function calling for more details). 
 
+The Swarm repository emphasizes the importance of explicit return types for agent functions. While strings are recommended for improved language model handling, other return types are possible, though potentially requiring additional handling.
+
 **9. Advanced Features:**
 
 **9.1 Agent Handoffs:**
@@ -956,6 +958,9 @@ def handle_complaint(context_variables, complaint_details):
         return refunds_agent  # Implicitly handoff to the refunds agent
     # ... other logic ...
 ```
+
+Agent handoffs can be implicit, by returning the new agent from a tool function or by using the aforementioned transfer_to_X functions.
+
 
 **9.5 Database and API Integration:** 
 
