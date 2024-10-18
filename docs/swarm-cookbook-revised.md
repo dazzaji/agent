@@ -30,7 +30,7 @@ Swarm is built on the following principles:
 
 **4. Core Concepts:**
 
-- **4.1 Agents (Routines):**  Agents are the heart of Swarm, representing individual conversational routines. Each agent has specific instructions, access to tools (functions), and the ability to hand off the conversation to another agent. Think of agents as specialized experts that handle particular aspects of a conversation. 
+- **4.1 Agents:**  Agents are the heart of Swarm, representing individual conversational routines. Each agent has specific instructions, access to tools (functions), and the ability to hand off the conversation to another agent. Think of agents as specialized experts that handle particular aspects of a conversation. 
 
    ```python 
     class Agent(BaseModel):
@@ -49,7 +49,8 @@ Swarm is built on the following principles:
    - `instructions`:  The instructions that guide the agent's behavior. Can be a simple string or a function that returns a string. 
    - `functions`: A list of callable Python functions that the agent has access to. These functions represent the agent's "tools."
    - `tool_choice`: Advanced option for controlling which function the model should call (see OpenAI API docs).
-   - `parallel_tool_calls`: A boolean that indicates whether the agent can call multiple functions in parallel (default is `True`). 
+   - `parallel_tool_calls`: A boolean that indicates whether the agent can call multiple functions in parallel (default is `True`).
+
 
 - **4.2 Instructions:** Instructions define the persona and behavior of an agent. They can be simple strings or dynamic functions that adapt based on context:
 
@@ -122,7 +123,295 @@ Swarm is built on the following principles:
        return Result(value="Location updated.", context_variables=context_variables) 
 
    # ... Agent definition with the set_user_location function ...
-   ```  
+   ```
+
+- **4.7 Routines:** The notion of a "routine" is not strictly defined, and instead meant to capture the idea of a set of steps. Conretely, let's define a routine to be a list of instructions in natural langauge (which we'll represent with a system prompt), along with the tools necessary to complete them.
+
+Let's take a look at an example. Below, we've defined a routine for a customer service agent instructing it to triage the user issue, then either suggest a fix or provide a refund. We've also defined the necessary functions `execute_refund` and `look_up_item`. We can call this a customer service routine, agent, assistant, etc – however the idea itself is the same: a set of steps and the tools to execute them.
+
+```
+# Customer Service Routine
+
+system_message = (
+    "You are a customer support agent for ACME Inc."
+    "Always answer in a sentence or less."
+    "Follow the following routine with the user:"
+    "1. First, ask probing questions and understand the user's problem deeper.\n"
+    " - unless the user has already provided a reason.\n"
+    "2. Propose a fix (make one up).\n"
+    "3. ONLY if not satesfied, offer a refund.\n"
+    "4. If accepted, search for the ID and then execute refund."
+    ""
+)
+
+def look_up_item(search_query):
+    """Use to find item ID.
+    Search query can be a description or keywords."""
+
+    # return hard-coded item ID - in reality would be a lookup
+    return "item_132612938"
+
+
+def execute_refund(item_id, reason="not provided"):
+
+    print("Summary:", item_id, reason) # lazy summary
+    return "success"
+```
+
+The main power of routines is their simplicity and robustness. Notice that these instructions contain conditionals much like a state machine or branching in code. LLMs can actually handle these cases quite robustly for small and medium sized routine, with the added benefit of having "soft" adherance – the LLM can naturally steer the conversation without getting stuck in dead-ends.
+
+[Executing Routines](https://cookbook.openai.com/examples/orchestrating_agents#executing-routines)
+--------------------------------------------------------------------------------------------------
+
+To execute a routine, let's implement a simple loop that:
+
+1.  Gets user input.
+2.  Appends user message to `messages`.
+3.  Calls the model.
+4.  Appends model response to `messages`.
+
+```
+def run_full_turn(system_message, messages):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "system", "content": system_message}] + messages,
+    )
+    message = response.choices[0].message
+    messages.append(message)
+
+    if message.content: print("Assistant:", message.content)
+
+    return message
+
+
+messages = []
+while True:
+    user = input("User: ")
+    messages.append({"role": "user", "content": user})
+
+    run_full_turn(system_message, messages)
+```
+
+As you can see, this currently ignores function calls, so let's add that.
+
+Models require functions to be formatted as a function schema. For convenience, we can define a helper function that turns python functions into the corresponding function schema.
+
+```
+import inspect
+
+def function_to_schema(func) -> dict:
+    type_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+        type(None): "null",
+    }
+
+    try:
+        signature = inspect.signature(func)
+    except ValueError as e:
+        raise ValueError(
+            f"Failed to get signature for function {func.__name__}: {str(e)}"
+        )
+
+    parameters = {}
+    for param in signature.parameters.values():
+        try:
+            param_type = type_map.get(param.annotation, "string")
+        except KeyError as e:
+            raise KeyError(
+                f"Unknown type annotation {param.annotation} for parameter {param.name}: {str(e)}"
+            )
+        parameters[param.name] = {"type": param_type}
+
+    required = [
+        param.name
+        for param in signature.parameters.values()
+        if param.default == inspect._empty
+    ]
+
+    return {
+        "type": "function",
+        "function": {
+            "name": func.__name__,
+            "description": (func.__doc__ or "").strip(),
+            "parameters": {
+                "type": "object",
+                "properties": parameters,
+                "required": required,
+            },
+        },
+    }
+```
+
+For example:
+
+```
+def sample_function(param_1, param_2, the_third_one: int, some_optional="John Doe"):
+    """
+    This is my docstring. Call this function when you want.
+    """
+    print("Hello, world")
+
+schema =  function_to_schema(sample_function)
+print(json.dumps(schema, indent=2))
+```
+
+{
+  "type": "function",
+  "function": {
+    "name": "sample\_function",
+    "description": "This is my docstring. Call this function when you want.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "param\_1": {
+          "type": "string"
+        },
+        "param\_2": {
+          "type": "string"
+        },
+        "the\_third\_one": {
+          "type": "integer"
+        },
+        "some\_optional": {
+          "type": "string"
+        }
+      },
+      "required": \[
+        "param\_1",
+        "param\_2",
+        "the\_third\_one"
+      \]
+    }
+  }
+}
+
+Now, we can use this function to pass the tools to the model when we call it.
+
+```
+messages = []
+
+tools = [execute_refund, look_up_item]
+tool_schemas = [function_to_schema(tool) for tool in tools]
+
+response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Look up the black boot."}],
+            tools=tool_schemas,
+        )
+message = response.choices[0].message
+
+message.tool_calls[0].function
+```
+
+Function(arguments='{"search\_query":"black boot"}', name='look\_up\_item')
+
+Finally, when the model calls a tool we need to execute the corresponding function and provide the result back to the model.
+
+We can do this by mapping the name of the tool to the python function in a `tool_map`, then looking it up in `execute_tool_call` and calling it. Finally we add the result to the conversation.
+
+```
+tools_map = {tool.__name__: tool for tool in tools}
+
+def execute_tool_call(tool_call, tools_map):
+    name = tool_call.function.name
+    args = json.loads(tool_call.function.arguments)
+
+    print(f"Assistant: {name}({args})")
+
+    # call corresponding function with provided arguments
+    return tools_map[name](**args)
+
+for tool_call in message.tool_calls:
+            result = execute_tool_call(tool_call, tools_map)
+
+            # add result back to conversation 
+            result_message = {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": result,
+            }
+            messages.append(result_message)
+```
+
+Assistant: look\_up\_item({'search\_query': 'black boot'})
+
+In practice, we'll also want to let the model use the result to produce another response. That response might _also_ contain a tool call, so we can just run this in a loop until there are no more tool calls.
+
+If we put everything together, it will look something like this:
+
+```
+tools = [execute_refund, look_up_item]
+
+
+def run_full_turn(system_message, tools, messages):
+
+    num_init_messages = len(messages)
+    messages = messages.copy()
+
+    while True:
+
+        # turn python functions into tools and save a reverse map
+        tool_schemas = [function_to_schema(tool) for tool in tools]
+        tools_map = {tool.__name__: tool for tool in tools}
+
+        # === 1. get openai completion ===
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": system_message}] + messages,
+            tools=tool_schemas or None,
+        )
+        message = response.choices[0].message
+        messages.append(message)
+
+        if message.content:  # print assistant response
+            print("Assistant:", message.content)
+
+        if not message.tool_calls:  # if finished handling tool calls, break
+            break
+
+        # === 2. handle tool calls ===
+
+        for tool_call in message.tool_calls:
+            result = execute_tool_call(tool_call, tools_map)
+
+            result_message = {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": result,
+            }
+            messages.append(result_message)
+
+    # ==== 3. return new messages =====
+    return messages[num_init_messages:]
+
+
+def execute_tool_call(tool_call, tools_map):
+    name = tool_call.function.name
+    args = json.loads(tool_call.function.arguments)
+
+    print(f"Assistant: {name}({args})")
+
+    # call corresponding function with provided arguments
+    return tools_map[name](**args)
+
+
+messages = []
+while True:
+    user = input("User: ")
+    messages.append({"role": "user", "content": user})
+
+    new_messages = run_full_turn(system_message, tools, messages)
+    messages.extend(new_messages)
+```
+
+Now that we have a routine, let's say we want to add more steps and more tools. We can up to a point, but eventually if we try growing the routine with too many different tasks it may start to struggle. This is where we can leverage the notion of multiple routines – given a user request, we can load the right routine with the appropriate steps and tools to address it.
+
+Dynamically swapping system instructions and tools may seem daunting. However, if we view "routines" as "agents", then this notion of **handoffs** allow us to represent these swaps simply – as one agent handing off a conversation to another.
 
 **5. Installation and Setup:**
 
