@@ -966,6 +966,8 @@ def handle_complaint(context_variables, complaint_details):
 
 - By default, Swarm allows agents to call multiple functions (tools) simultaneously if the model requests them.
 - You can disable this by setting `parallel_tool_calls=False` in the `Agent` constructor. This forces the agent to execute functions sequentially.
+- The repository's customer_service example provides additional practical insight into how functions are executed.
+
 
 **10.  Testing and Evaluation:**
 
