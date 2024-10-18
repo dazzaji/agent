@@ -1008,6 +1008,14 @@ def test_my_agent_calls_correct_function():
     assert tool_calls[0]["function"]["name"] == "expected_function_name"
 ``` 
 
+The Swarm repository showcases an interactive command-line interface using `run_demo_loop`. This simplifies testing and facilitates a more interactive development process.
+
+```python
+from swarm.repl import run_demo_loop
+run_demo_loop(starting_agent)
+```
+
+
 **11. Troubleshooting:**
 
 ### 11.1 Common Issues and Solutions
