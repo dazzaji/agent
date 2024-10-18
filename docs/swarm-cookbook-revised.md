@@ -202,7 +202,7 @@ Assistant: Your refund for the black boot has been successfully processed. If yo
 
 Great! But we did the handoff manually here – we want the agents themselves to decide when to perform a handoff. A simple, but surprisingly effective way to do this is by giving them a `transfer_to_XXX` function, where `XXX` is some agent. The model is smart enough to know to call this function when it makes sense to make a handoff!
 
-### [Handoff Functions](https://cookbook.openai.com/examples/orchestrating_agents#handoff-functions)
+[Handoff Functions](https://cookbook.openai.com/examples/orchestrating_agents#handoff-functions)
 
 Now that agent can express the _intent_ to make a handoff, we must make it actually happen. There's many ways to do this, but there's one particularly clean way.
 
@@ -415,6 +415,31 @@ while True:
     response = run_full_turn(agent, messages)
     agent = response.agent
     messages.extend(response.messages)
+```
+**4.4.1: Dedicated `transfer_to_X` Functions**
+
+A more robust and preferred method handoff demonstrated in the repository (specifically the `airline`, `support_bot`, and `triage_agent` examples) involves using dedicated `transfer_to_X` functions. This makes the handoff intent clear to the model.
+
+```python
+# Example from the triage_agent example
+def transfer_to_sales():
+    return sales_agent
+
+def transfer_to_refunds():
+    return refunds_agent
+
+triage_agent.functions = [transfer_to_sales, transfer_to_refunds] 
+```
+
+The `create_triage_agent` function, simplifies the creation of triage agents with these transfer functions.
+
+Note that functions must include a `context_variables` parameter in their definition if they are designed to utilize them.
+
+```python
+def my_function(context_variables, other_arg):
+    # Access context variables here
+    user_name = context_variables.get("user_name", "User")
+    # ... rest of your function
 ```
 
 - **4.5 Context Variables:** Context variables are key-value pairs that provide a shared memory space for agents and functions. They allow you to maintain state and context throughout a conversation:
