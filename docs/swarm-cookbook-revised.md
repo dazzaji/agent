@@ -158,7 +158,7 @@ Swarm is built on the following principles:
 
 **6.1 Imports:**
 
-First, be sure to include these imports:
+First, be sure to include these minimum imports:
 
 ```python
 from openai import OpenAI
@@ -166,6 +166,17 @@ from swarm import Swarm, Agent
 
 client = OpenAI()
 swarm = Swarm(client=client)
+```
+
+A more typical set of imports for a slightly larger project might look like this:
+
+```
+from openai import OpenAI
+from pydantic import BaseModel
+from typing import Optional
+import json
+
+client = OpenAI()
 ```
 
 **6.2 Creating a Simple Agent:**
