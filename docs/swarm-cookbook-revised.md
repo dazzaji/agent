@@ -1234,3 +1234,924 @@ def greet(name: str, age: int, location: str = "New York"):
 **15. Conclusion:**
 
 The Swarm framework provides a lightweight, flexible, and testable approach to orchestrating multi-agent systems with OpenAI's language models. While it's not yet production-ready, Swarm is a valuable educational tool for exploring the possibilities of agent coordination and building custom solutions for complex conversational AI tasks. 
+
+------------------------------------
+
+# README FROM SWARM REPO
+
+------------------------------------
+
+## README.md
+
+![Swarm Logo](assets/logo.png)
+
+# Swarm (experimental, educational)
+
+An educational framework exploring ergonomic, lightweight multi-agent orchestration.
+
+> [!WARNING]
+> Swarm is currently an experimental sample framework intended to explore ergonomic interfaces for multi-agent systems. It is not intended to be used in production, and therefore has no official support. (This also means we will not be reviewing PRs or issues!)
+>
+> The primary goal of Swarm is to showcase the handoff & routines patterns explored in the [Orchestrating Agents: Handoffs & Routines](https://cookbook.openai.com/examples/orchestrating_agents) cookbook. It is not meant as a standalone library, and is primarily for educational purposes.
+
+## Install
+
+Requires Python 3.10+
+
+```shell
+pip install git+ssh://git@github.com/openai/swarm.git
+```
+
+or
+
+```shell
+pip install git+https://github.com/openai/swarm.git
+```
+
+## Usage
+
+```python
+from swarm import Swarm, Agent
+
+client = Swarm()
+
+def transfer_to_agent_b():
+    return agent_b
+
+
+agent_a = Agent(
+    name="Agent A",
+    instructions="You are a helpful agent.",
+    functions=[transfer_to_agent_b],
+)
+
+agent_b = Agent(
+    name="Agent B",
+    instructions="Only speak in Haikus.",
+)
+
+response = client.run(
+    agent=agent_a,
+    messages=[{"role": "user", "content": "I want to talk to agent B."}],
+)
+
+print(response.messages[-1]["content"])
+```
+
+```
+Hope glimmers brightly,
+New paths converge gracefully,
+What can I assist?
+```
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Examples](#examples)
+- [Documentation](#documentation)
+  - [Running Swarm](#running-swarm)
+  - [Agents](#agents)
+  - [Functions](#functions)
+  - [Streaming](#streaming)
+- [Evaluations](#evaluations)
+- [Utils](#utils)
+
+# Overview
+
+Swarm focuses on making agent **coordination** and **execution** lightweight, highly controllable, and easily testable.
+
+It accomplishes this through two primitive abstractions: `Agent`s and **handoffs**. An `Agent` encompasses `instructions` and `tools`, and can at any point choose to hand off a conversation to another `Agent`.
+
+These primitives are powerful enough to express rich dynamics between tools and networks of agents, allowing you to build scalable, real-world solutions while avoiding a steep learning curve.
+
+> [!NOTE]
+> Swarm Agents are not related to Assistants in the Assistants API. They are named similarly for convenience, but are otherwise completely unrelated. Swarm is entirely powered by the Chat Completions API and is hence stateless between calls.
+
+## Why Swarm
+
+Swarm explores patterns that are lightweight, scalable, and highly customizable by design. Approaches similar to Swarm are best suited for situations dealing with a large number of independent capabilities and instructions that are difficult to encode into a single prompt.
+
+The Assistants API is a great option for developers looking for fully-hosted threads and built in memory management and retrieval. However, Swarm is an educational resource for developers curious to learn about multi-agent orchestration. Swarm runs (almost) entirely on the client and, much like the Chat Completions API, does not store state between calls.
+
+# Examples
+
+Check out `/examples` for inspiration! Learn more about each one in its README.
+
+- [`basic`](examples/basic): Simple examples of fundamentals like setup, function calling, handoffs, and context variables
+- [`triage_agent`](examples/triage_agent): Simple example of setting up a basic triage step to hand off to the right agent
+- [`weather_agent`](examples/weather_agent): Simple example of function calling
+- [`airline`](examples/airline): A multi-agent setup for handling different customer service requests in an airline context.
+- [`support_bot`](examples/support_bot): A customer service bot which includes a user interface agent and a help center agent with several tools
+- [`personal_shopper`](examples/personal_shopper): A personal shopping agent that can help with making sales and refunding orders
+
+# Documentation
+
+![Swarm Diagram](assets/swarm_diagram.png)
+
+## Running Swarm
+
+Start by instantiating a Swarm client (which internally just instantiates an `OpenAI` client).
+
+```python
+from swarm import Swarm
+
+client = Swarm()
+```
+
+### `client.run()`
+
+Swarm's `run()` function is analogous to the `chat.completions.create()` function in the Chat Completions API – it takes `messages` and returns `messages` and saves no state between calls. Importantly, however, it also handles Agent function execution, hand-offs, context variable references, and can take multiple turns before returning to the user.
+
+At its core, Swarm's `client.run()` implements the following loop:
+
+1. Get a completion from the current Agent
+2. Execute tool calls and append results
+3. Switch Agent if necessary
+4. Update context variables, if necessary
+5. If no new function calls, return
+
+#### Arguments
+
+| Argument              | Type    | Description                                                                                                                                            | Default        |
+| --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| **agent**             | `Agent` | The (initial) agent to be called.                                                                                                                      | (required)     |
+| **messages**          | `List`  | A list of message objects, identical to [Chat Completions `messages`](https://platform.openai.com/docs/api-reference/chat/create#chat-create-messages) | (required)     |
+| **context_variables** | `dict`  | A dictionary of additional context variables, available to functions and Agent instructions                                                            | `{}`           |
+| **max_turns**         | `int`   | The maximum number of conversational turns allowed                                                                                                     | `float("inf")` |
+| **model_override**    | `str`   | An optional string to override the model being used by an Agent                                                                                        | `None`         |
+| **execute_tools**     | `bool`  | If `False`, interrupt execution and immediately returns `tool_calls` message when an Agent tries to call a function                                    | `True`         |
+| **stream**            | `bool`  | If `True`, enables streaming responses                                                                                                                 | `False`        |
+| **debug**             | `bool`  | If `True`, enables debug logging                                                                                                                       | `False`        |
+
+Once `client.run()` is finished (after potentially multiple calls to agents and tools) it will return a `Response` containing all the relevant updated state. Specifically, the new `messages`, the last `Agent` to be called, and the most up-to-date `context_variables`. You can pass these values (plus new user messages) in to your next execution of `client.run()` to continue the interaction where it left off – much like `chat.completions.create()`. (The `run_demo_loop` function implements an example of a full execution loop in `/swarm/repl/repl.py`.)
+
+#### `Response` Fields
+
+| Field                 | Type    | Description                                                                                                                                                                                                                                                                  |
+| --------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **messages**          | `List`  | A list of message objects generated during the conversation. Very similar to [Chat Completions `messages`](https://platform.openai.com/docs/api-reference/chat/create#chat-create-messages), but with a `sender` field indicating which `Agent` the message originated from. |
+| **agent**             | `Agent` | The last agent to handle a message.                                                                                                                                                                                                                                          |
+| **context_variables** | `dict`  | The same as the input variables, plus any changes.                                                                                                                                                                                                                           |
+
+## Agents
+
+An `Agent` simply encapsulates a set of `instructions` with a set of `functions` (plus some additional settings below), and has the capability to hand off execution to another `Agent`.
+
+While it's tempting to personify an `Agent` as "someone who does X", it can also be used to represent a very specific workflow or step defined by a set of `instructions` and `functions` (e.g. a set of steps, a complex retrieval, single step of data transformation, etc). This allows `Agent`s to be composed into a network of "agents", "workflows", and "tasks", all represented by the same primitive.
+
+## `Agent` Fields
+
+| Field            | Type                     | Description                                                                   | Default                      |
+| ---------------- | ------------------------ | ----------------------------------------------------------------------------- | ---------------------------- |
+| **name**         | `str`                    | The name of the agent.                                                        | `"Agent"`                    |
+| **model**        | `str`                    | The model to be used by the agent.                                            | `"gpt-4o"`                   |
+| **instructions** | `str` or `func() -> str` | Instructions for the agent, can be a string or a callable returning a string. | `"You are a helpful agent."` |
+| **functions**    | `List`                   | A list of functions that the agent can call.                                  | `[]`                         |
+| **tool_choice**  | `str`                    | The tool choice for the agent, if any.                                        | `None`                       |
+
+### Instructions
+
+`Agent` `instructions` are directly converted into the `system` prompt of a conversation (as the first message). Only the `instructions` of the active `Agent` will be present at any given time (e.g. if there is an `Agent` handoff, the `system` prompt will change, but the chat history will not.)
+
+```python
+agent = Agent(
+   instructions="You are a helpful agent."
+)
+```
+
+The `instructions` can either be a regular `str`, or a function that returns a `str`. The function can optionally receive a `context_variables` parameter, which will be populated by the `context_variables` passed into `client.run()`.
+
+```python
+def instructions(context_variables):
+   user_name = context_variables["user_name"]
+   return f"Help the user, {user_name}, do whatever they want."
+
+agent = Agent(
+   instructions=instructions
+)
+response = client.run(
+   agent=agent,
+   messages=[{"role":"user", "content": "Hi!"}],
+   context_variables={"user_name":"John"}
+)
+print(response.messages[-1]["content"])
+```
+
+```
+Hi John, how can I assist you today?
+```
+
+## Functions
+
+- Swarm `Agent`s can call python functions directly.
+- Function should usually return a `str` (values will be attempted to be cast as a `str`).
+- If a function returns an `Agent`, execution will be transferred to that `Agent`.
+- If a function defines a `context_variables` parameter, it will be populated by the `context_variables` passed into `client.run()`.
+
+```python
+def greet(context_variables, language):
+   user_name = context_variables["user_name"]
+   greeting = "Hola" if language.lower() == "spanish" else "Hello"
+   print(f"{greeting}, {user_name}!")
+   return "Done"
+
+agent = Agent(
+   functions=[greet]
+)
+
+client.run(
+   agent=agent,
+   messages=[{"role": "user", "content": "Usa greet() por favor."}],
+   context_variables={"user_name": "John"}
+)
+```
+
+```
+Hola, John!
+```
+
+- If an `Agent` function call has an error (missing function, wrong argument, error) an error response will be appended to the chat so the `Agent` can recover gracefully.
+- If multiple functions are called by the `Agent`, they will be executed in that order.
+
+### Handoffs and Updating Context Variables
+
+An `Agent` can hand off to another `Agent` by returning it in a `function`.
+
+```python
+sales_agent = Agent(name="Sales Agent")
+
+def transfer_to_sales():
+   return sales_agent
+
+agent = Agent(functions=[transfer_to_sales])
+
+response = client.run(agent, [{"role":"user", "content":"Transfer me to sales."}])
+print(response.agent.name)
+```
+
+```
+Sales Agent
+```
+
+It can also update the `context_variables` by returning a more complete `Result` object. This can also contain a `value` and an `agent`, in case you want a single function to return a value, update the agent, and update the context variables (or any subset of the three).
+
+```python
+sales_agent = Agent(name="Sales Agent")
+
+def talk_to_sales():
+   print("Hello, World!")
+   return Result(
+       value="Done",
+       agent=sales_agent,
+       context_variables={"department": "sales"}
+   )
+
+agent = Agent(functions=[talk_to_sales])
+
+response = client.run(
+   agent=agent,
+   messages=[{"role": "user", "content": "Transfer me to sales"}],
+   context_variables={"user_name": "John"}
+)
+print(response.agent.name)
+print(response.context_variables)
+```
+
+```
+Sales Agent
+{'department': 'sales', 'user_name': 'John'}
+```
+
+> [!NOTE]
+> If an `Agent` calls multiple functions to hand-off to an `Agent`, only the last handoff function will be used.
+
+### Function Schemas
+
+Swarm automatically converts functions into a JSON Schema that is passed into Chat Completions `tools`.
+
+- Docstrings are turned into the function `description`.
+- Parameters without default values are set to `required`.
+- Type hints are mapped to the parameter's `type` (and default to `string`).
+- Per-parameter descriptions are not explicitly supported, but should work similarly if just added in the docstring. (In the future docstring argument parsing may be added.)
+
+```python
+def greet(name, age: int, location: str = "New York"):
+   """Greets the user. Make sure to get their name and age before calling.
+
+   Args:
+      name: Name of the user.
+      age: Age of the user.
+      location: Best place on earth.
+   """
+   print(f"Hello {name}, glad you are {age} in {location}!")
+```
+
+```javascript
+{
+   "type": "function",
+   "function": {
+      "name": "greet",
+      "description": "Greets the user. Make sure to get their name and age before calling.\n\nArgs:\n   name: Name of the user.\n   age: Age of the user.\n   location: Best place on earth.",
+      "parameters": {
+         "type": "object",
+         "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+            "location": {"type": "string"}
+         },
+         "required": ["name", "age"]
+      }
+   }
+}
+```
+
+## Streaming
+
+```python
+stream = client.run(agent, messages, stream=True)
+for chunk in stream:
+   print(chunk)
+```
+
+Uses the same events as [Chat Completions API streaming](https://platform.openai.com/docs/api-reference/streaming). See `process_and_print_streaming_response` in `/swarm/repl/repl.py` as an example.
+
+Two new event types have been added:
+
+- `{"delim":"start"}` and `{"delim":"end"}`, to signal each time an `Agent` handles a single message (response or function call). This helps identify switches between `Agent`s.
+- `{"response": Response}` will return a `Response` object at the end of a stream with the aggregated (complete) response, for convenience.
+
+# Evaluations
+
+Evaluations are crucial to any project, and we encourage developers to bring their own eval suites to test the performance of their swarms. For reference, we have some examples for how to eval swarm in the `airline`, `weather_agent` and `triage_agent` quickstart examples. See the READMEs for more details.
+
+# Utils
+
+Use the `run_demo_loop` to test out your swarm! This will run a REPL on your command line. Supports streaming.
+
+```python
+from swarm.repl import run_demo_loop
+...
+run_demo_loop(agent, stream=True)
+```
+
+
+
+------------------------------------
+
+
+# EXAMPLES FROM SWARM REPO
+
+------------------------------------
+
+
+# Personal Shopper
+
+## examples/personal_shopper/README.md
+
+# Personal shopper
+
+This Swarm is a personal shopping agent that can help with making sales and refunding orders.
+This example uses the helper function `run_demo_loop`, which allows us to create an interactive Swarm session.
+In this example, we also use a Sqlite3 database with customer information and transaction data.
+
+## Overview
+
+The personal shopper example includes three main agents to handle various customer service requests:
+
+1. **Triage Agent**: Determines the type of request and transfers to the appropriate agent.
+2. **Refund Agent**: Manages customer refunds, requiring both user ID and item ID to initiate a refund.
+3. **Sales Agent**: Handles actions related to placing orders, requiring both user ID and product ID to complete a purchase.
+
+## Setup
+
+Once you have installed dependencies and Swarm, run the example using:
+
+```shell
+python3 main.py
+```
+
+---
+
+## examples/personal_shopper/main.py
+
+import datetime
+import random
+
+import database
+from swarm import Agent
+from swarm.agents import create_triage_agent
+from swarm.repl import run_demo_loop
+
+
+def refund_item(user_id, item_id):
+    """Initiate a refund based on the user ID and item ID.
+    Takes as input arguments in the format '{"user_id":"1","item_id":"3"}'
+    """
+    conn = database.get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT amount FROM PurchaseHistory
+        WHERE user_id = ? AND item_id = ?
+    """,
+        (user_id, item_id),
+    )
+    result = cursor.fetchone()
+    if result:
+        amount = result[0]
+        print(f"Refunding ${amount} to user ID {user_id} for item ID {item_id}.")
+    else:
+        print(f"No purchase found for user ID {user_id} and item ID {item_id}.")
+    print("Refund initiated")
+
+
+def notify_customer(user_id, method):
+    """Notify a customer by their preferred method of either phone or email.
+    Takes as input arguments in the format '{"user_id":"1","method":"email"}'"""
+
+    conn = database.get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT email, phone FROM Users
+        WHERE user_id = ?
+    """,
+        (user_id,),
+    )
+    user = cursor.fetchone()
+    if user:
+        email, phone = user
+        if method == "email" and email:
+            print(f"Emailed customer {email} a notification.")
+        elif method == "phone" and phone:
+            print(f"Texted customer {phone} a notification.")
+        else:
+            print(f"No {method} contact available for user ID {user_id}.")
+    else:
+        print(f"User ID {user_id} not found.")
+
+
+def order_item(user_id, product_id):
+    """Place an order for a product based on the user ID and product ID.
+    Takes as input arguments in the format '{"user_id":"1","product_id":"2"}'"""
+    date_of_purchase = datetime.datetime.now()
+    item_id = random.randint(1, 300)
+
+    conn = database.get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT product_id, product_name, price FROM Products
+        WHERE product_id = ?
+    """,
+        (product_id,),
+    )
+    result = cursor.fetchone()
+    if result:
+        product_id, product_name, price = result
+        print(
+            f"Ordering product {product_name} for user ID {user_id}. The price is {price}."
+        )
+        # Add the purchase to the database
+        database.add_purchase(user_id, date_of_purchase, item_id, price)
+    else:
+        print(f"Product {product_id} not found.")
+
+
+# Initialize the database
+database.initialize_database()
+
+# Preview tables
+database.preview_table("Users")
+database.preview_table("PurchaseHistory")
+database.preview_table("Products")
+
+# Define the agents
+
+refunds_agent = Agent(
+    name="Refunds Agent",
+    description=f"""You are a refund agent that handles all actions related to refunds after a return has been processed.
+    You must ask for both the user ID and item ID to initiate a refund. Ask for both user_id and item_id in one message.
+    If the user asks you to notify them, you must ask them what their preferred method of notification is. For notifications, you must
+    ask them for user_id and method in one message.""",
+    functions=[refund_item, notify_customer],
+)
+
+sales_agent = Agent(
+    name="Sales Agent",
+    description=f"""You are a sales agent that handles all actions related to placing an order to purchase an item.
+    Regardless of what the user wants to purchase, must ask for BOTH the user ID and product ID to place an order.
+    An order cannot be placed without these two pieces of information. Ask for both user_id and product_id in one message.
+    If the user asks you to notify them, you must ask them what their preferred method is. For notifications, you must
+    ask them for user_id and method in one message.
+    """,
+    functions=[order_item, notify_customer],
+)
+
+triage_agent = create_triage_agent(
+    name="Triage Agent",
+    instructions=f"""You are to triage a users request, and call a tool to transfer to the right intent.
+    Once you are ready to transfer to the right intent, call the tool to transfer to the right intent.
+    You dont need to know specifics, just the topic of the request.
+    If the user request is about making an order or purchasing an item, transfer to the Sales Agent.
+    If the user request is about getting a refund on an item or returning a product, transfer to the Refunds Agent.
+    When you need more information to triage the request to an agent, ask a direct question without explaining why you're asking it.
+    Do not share your thought process with the user! Do not make unreasonable assumptions on behalf of user.""",
+    agents=[sales_agent, refunds_agent],
+    add_backlinks=True,
+)
+
+for f in triage_agent.functions:
+    print(f.__name__)
+
+if __name__ == "__main__":
+    # Run the demo loop
+    run_demo_loop(triage_agent, debug=False)
+
+
+---
+
+## examples/personal_shopper/database.py
+
+import sqlite3
+
+# global connection
+conn = None
+
+
+def get_connection():
+    global conn
+    if conn is None:
+        conn = sqlite3.connect("application.db")
+    return conn
+
+
+def create_database():
+    # Connect to a single SQLite database
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Create Users table
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS Users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            first_name TEXT,
+            last_name TEXT,
+            email TEXT UNIQUE,
+            phone TEXT
+        )
+    """
+    )
+
+    # Create PurchaseHistory table
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS PurchaseHistory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            date_of_purchase TEXT,
+            item_id INTEGER,
+            amount REAL,
+            FOREIGN KEY (user_id) REFERENCES Users(user_id)
+        )
+    """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS Products (
+            product_id INTEGER PRIMARY KEY,
+            product_name TEXT NOT NULL,
+            price REAL NOT NULL
+        );
+        """
+    )
+
+    # Save (commit) the changes
+    conn.commit()
+
+
+def add_user(user_id, first_name, last_name, email, phone):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Check if the user already exists
+    cursor.execute("SELECT * FROM Users WHERE user_id = ?", (user_id,))
+    if cursor.fetchone():
+        return
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO Users (user_id, first_name, last_name, email, phone)
+            VALUES (?, ?, ?, ?, ?)
+        """,
+            (user_id, first_name, last_name, email, phone),
+        )
+
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database Error: {e}")
+
+
+def add_purchase(user_id, date_of_purchase, item_id, amount):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Check if the purchase already exists
+    cursor.execute(
+        """
+        SELECT * FROM PurchaseHistory
+        WHERE user_id = ? AND item_id = ? AND date_of_purchase = ?
+    """,
+        (user_id, item_id, date_of_purchase),
+    )
+    if cursor.fetchone():
+        # print(f"Purchase already exists for user_id {user_id} on {date_of_purchase} for item_id {item_id}.")
+        return
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO PurchaseHistory (user_id, date_of_purchase, item_id, amount)
+            VALUES (?, ?, ?, ?)
+        """,
+            (user_id, date_of_purchase, item_id, amount),
+        )
+
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database Error: {e}")
+
+
+def add_product(product_id, product_name, price):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+        INSERT INTO Products (product_id, product_name, price)
+        VALUES (?, ?, ?);
+        """,
+            (product_id, product_name, price),
+        )
+
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database Error: {e}")
+
+
+def close_connection():
+    global conn
+    if conn:
+        conn.close()
+        conn = None
+
+
+def preview_table(table_name):
+    conn = sqlite3.connect("application.db")  # Replace with your database name
+    cursor = conn.cursor()
+
+    cursor.execute(f"SELECT * FROM {table_name} LIMIT 5;")  # Limit to first 5 rows
+
+    rows = cursor.fetchall()
+
+    for row in rows:
+        print(row)
+
+    conn.close()
+
+
+# Initialize and load database
+def initialize_database():
+    global conn
+
+    # Initialize the database tables
+    create_database()
+
+    # Add some initial users
+    initial_users = [
+        (1, "Alice", "Smith", "alice@test.com", "123-456-7890"),
+        (2, "Bob", "Johnson", "bob@test.com", "234-567-8901"),
+        (3, "Sarah", "Brown", "sarah@test.com", "555-567-8901"),
+        # Add more initial users here
+    ]
+
+    for user in initial_users:
+        add_user(*user)
+
+    # Add some initial purchases
+    initial_purchases = [
+        (1, "2024-01-01", 101, 99.99),
+        (2, "2023-12-25", 100, 39.99),
+        (3, "2023-11-14", 307, 49.99),
+    ]
+
+    for purchase in initial_purchases:
+        add_purchase(*purchase)
+
+    initial_products = [
+        (7, "Hat", 19.99),
+        (8, "Wool socks", 29.99),
+        (9, "Shoes", 39.99),
+    ]
+
+    for product in initial_products:
+        add_product(*product)
+
+-----
+
+# Basic Agent in Swarm
+
+---
+
+## examples/basic/README.md
+
+# Swarm basic
+
+This folder contains basic examples demonstrating core Swarm capabilities. These examples show the simplest implementations of Swarm, with one input message, and a corresponding output. The `simple_loop_no_helpers` has a while loop to demonstrate how to create an interactive Swarm session.
+
+### Examples
+
+1. **agent_handoff.py**
+
+   - Demonstrates how to transfer a conversation from one agent to another.
+   - **Usage**: Transfers Spanish-speaking users from an English agent to a Spanish agent.
+
+2. **bare_minimum.py**
+
+   - A bare minimum example showing the basic setup of an agent.
+   - **Usage**: Sets up an agent that responds to a simple user message.
+
+3. **context_variables.py**
+
+   - Shows how to use context variables within an agent.
+   - **Usage**: Uses context variables to greet a user by name and print account details.
+
+4. **function_calling.py**
+
+   - Demonstrates how to define and call functions from an agent.
+   - **Usage**: Sets up an agent that can respond with weather information for a given location.
+
+5. **simple_loop_no_helpers.py**
+   - An example of a simple interaction loop without using helper functions.
+   - **Usage**: Sets up a loop where the user can continuously interact with the agent, printing the conversation.
+
+## Running the Examples
+
+To run any of the examples, use the following command:
+
+```shell
+python3 <example_name>.py
+```
+
+---
+
+## examples/basic/agent_handoff.py
+
+from swarm import Swarm, Agent
+
+client = Swarm()
+
+english_agent = Agent(
+    name="English Agent",
+    instructions="You only speak English.",
+)
+
+spanish_agent = Agent(
+    name="Spanish Agent",
+    instructions="You only speak Spanish.",
+)
+
+
+def transfer_to_spanish_agent():
+    """Transfer spanish speaking users immediately."""
+    return spanish_agent
+
+
+english_agent.functions.append(transfer_to_spanish_agent)
+
+messages = [{"role": "user", "content": "Hola. ¿Como estás?"}]
+response = client.run(agent=english_agent, messages=messages)
+
+print(response.messages[-1]["content"])
+
+---
+
+## examples/basic/bare_minimum.py
+
+from swarm import Swarm, Agent
+
+client = Swarm()
+
+agent = Agent(
+    name="Agent",
+    instructions="You are a helpful agent.",
+)
+
+messages = [{"role": "user", "content": "Hi!"}]
+response = client.run(agent=agent, messages=messages)
+
+print(response.messages[-1]["content"])
+
+---
+
+## examples/basic/context_variables.py
+
+from swarm import Swarm, Agent
+
+client = Swarm()
+
+
+def instructions(context_variables):
+    name = context_variables.get("name", "User")
+    return f"You are a helpful agent. Greet the user by name ({name})."
+
+
+def print_account_details(context_variables: dict):
+    user_id = context_variables.get("user_id", None)
+    name = context_variables.get("name", None)
+    print(f"Account Details: {name} {user_id}")
+    return "Success"
+
+
+agent = Agent(
+    name="Agent",
+    instructions=instructions,
+    functions=[print_account_details],
+)
+
+context_variables = {"name": "James", "user_id": 123}
+
+response = client.run(
+    messages=[{"role": "user", "content": "Hi!"}],
+    agent=agent,
+    context_variables=context_variables,
+)
+print(response.messages[-1]["content"])
+
+response = client.run(
+    messages=[{"role": "user", "content": "Print my account details!"}],
+    agent=agent,
+    context_variables=context_variables,
+)
+print(response.messages[-1]["content"])
+
+---
+
+## examples/basic/function_calling.py
+
+from swarm import Swarm, Agent
+
+client = Swarm()
+
+
+def get_weather(location) -> str:
+    return "{'temp':67, 'unit':'F'}"
+
+
+agent = Agent(
+    name="Agent",
+    instructions="You are a helpful agent.",
+    functions=[get_weather],
+)
+
+messages = [{"role": "user", "content": "What's the weather in NYC?"}]
+
+response = client.run(agent=agent, messages=messages)
+print(response.messages[-1]["content"])
+
+---
+
+## examples/basic/simple_loop_no_helpers.py
+
+from swarm import Swarm, Agent
+
+client = Swarm()
+
+my_agent = Agent(
+    name="Agent",
+    instructions="You are a helpful agent.",
+)
+
+
+def pretty_print_messages(messages):
+    for message in messages:
+        if message["content"] is None:
+            continue
+        print(f"{message['sender']}: {message['content']}")
+
+
+messages = []
+agent = my_agent
+while True:
+    user_input = input("> ")
+    messages.append({"role": "user", "content": user_input})
+
+    response = client.run(agent=agent, messages=messages)
+    messages = response.messages
+    agent = response.agent
+    pretty_print_messages(messages)
