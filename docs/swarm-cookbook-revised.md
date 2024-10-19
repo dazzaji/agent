@@ -1243,8 +1243,6 @@ The Swarm framework provides a lightweight, flexible, and testable approach to o
 
 ## README.md
 
-![Swarm Logo](assets/logo.png)
-
 # Swarm (experimental, educational)
 
 An educational framework exploring ergonomic, lightweight multi-agent orchestration.
